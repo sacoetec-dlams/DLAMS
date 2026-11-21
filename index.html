@@ -1535,14 +1535,13 @@ async function loadStaffTools() {
   const host = (me.staff && $("sec-oversight")) ? $("sec-oversight") : $("leadadm");
   if (!host) return;
   let t = $("stafftools"); if (!t) { t = document.createElement("div"); t.id = "stafftools"; host.appendChild(t); }
-  const [dp, st, oc] = await Promise.all([sb.rpc("my_scope_departments"), sb.rpc("staff_in_scope"), sb.rpc("allocatable_courses")]);
-  const depts = dp.data || [], staff = st.data || [], courses = oc.data || [];
-  window._tools = { depts, staff, courses };
+  const [dp, st] = await Promise.all([sb.rpc("my_scope_departments"), sb.rpc("staff_in_scope")]);
+  const depts = dp.data || [], staff = st.data || [];
+  window._tools = { depts, staff, courses: [] };
   const deanScope = isAdmin() || me.roles.some(r => ["dean", "subdean"].includes(r.role));
   const deptOpts = depts.map(d => `<option value="${d.dept_id}">${esc(d.school_name)} - ${esc(d.dept_name)}</option>`).join("");
   const levelOpts = [100, 200, 300, 400].map(l => `<option value="${l}">${l} Level</option>`).join("");
   const modeOpts = Object.entries(MODES).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
-  const staffOpts = staff.slice().sort((a, b) => cmpNo(a.login_id, b.login_id)).map(x => `<option value="${esc(x.login_id)}">${esc(x.full_name)} (${esc(x.login_id)})</option>`).join("");
   const addForm = `<div class="panel"><strong>Add a course</strong>
     <p class="muted">The course is linked to every class of this level and study mode in the department, and to the lecturer you choose.</p>
     <div class="fields">
@@ -1555,17 +1554,12 @@ async function loadStaffTools() {
       <div class="wide"><label for="ac-lec">Lecturer from the owning department</label><select id="ac-lec"></select></div>
     </div>
     <div class="actions"><button class="primary" onclick="toolAddCourse()">Add course</button></div><p id="ac-m2" role="status"></p></div>`;
-  const rows = courses.map(c => {
-    const linked = c.lecturer_name && c.lecturer_name !== "Unconfirmed";
-    return `<div style="padding:8px 0;border-top:1px solid var(--line)">
-      <strong>${esc(c.course_code)}</strong> ${esc(c.course_title)}
-      <button class="icon" aria-label="Edit course" title="Edit" onclick="toolEdit('${c.course_id}')">&#9998;</button>
-      <div class="muted">${esc(c.class_label || "")} &middot; hosted by ${esc(c.host_dept || "")} &middot; ${MODES[c.study_mode] || ""} &middot; ${AUDS[c.audience] || ""}</div>
-      ${linked ? `<div>Lecturer: <strong>${esc(c.lecturer_name)}</strong></div>`
-        : `<div class="actions"><select id="al-${c.course_id}"><option value="">Choose a lecturer</option>${staffOpts}</select>
-           <button onclick="toolAllocate('${c.course_id}')">Allocate</button></div>`}
-      <div id="ed-${c.course_id}"></div><span id="alm-${c.course_id}" class="muted"></span></div>`;
-  }).join("");
+  const selectors = `<div class="panel"><strong>Show courses</strong><div class="fields">
+      ${deanScope ? `<div class="wide"><label for="sc-d">Department</label><select id="sc-d" onchange="loadScoped()">${deptOpts}</select></div>`
+                  : `<input type="hidden" id="sc-d" value="${depts[0] ? depts[0].dept_id : ""}">`}
+      <div><label for="sc-m">Study mode</label><select id="sc-m" onchange="loadScoped()"><option value="">All modes</option>${modeOpts}</select></div>
+      <div><label for="sc-l">Level</label><select id="sc-l" onchange="loadScoped()"><option value="">All levels</option>${levelOpts}</select></div>
+    </div><p class="muted">General courses are not listed here. Courses your department hosts for other departments are listed below.</p></div>`;
   let hostBox = "";
   if (isAdmin()) {
     const gh = await sb.from("general_hosts").select("department_id");
@@ -1573,9 +1567,59 @@ async function loadStaffTools() {
     hostBox = `<div class="panel"><strong>Departments that host general courses</strong>
       ${depts.map(d => `<label class="check"><input type="checkbox" ${hosts.has(d.dept_id) ? "checked" : ""} onchange="toolHost('${d.dept_id}', this.checked)"> ${esc(d.school_name)} - ${esc(d.dept_name)}</label>`).join("")}</div>`;
   }
-  t.innerHTML = `<h2 style="margin-top:8px">Courses and lecturers</h2>${addForm}
-    <h2>Courses in your scope</h2>${rows || `<p class="panel">No courses in your scope yet.</p>`}${hostBox}`;
+  t.innerHTML = `<h2 style="margin-top:8px">Courses</h2>${selectors}
+    <div id="scoped"></div>
+    <h2>Courses hosted for other departments</h2><div id="hosted"></div>
+    <h2>Add a course</h2>${addForm}${hostBox}`;
   toolLecturers();
+  loadScoped();
+  loadHosted();
+}
+function staffOptions() {
+  return ((window._tools && window._tools.staff) || []).slice().sort((a, b) => cmpNo(a.login_id, b.login_id))
+    .map(x => `<option value="${esc(x.login_id)}">${esc(x.full_name)} (${esc(x.login_id)})</option>`).join("");
+}
+function courseRows(list) {
+  return list.length ? list.map(c => {
+    const linked = c.lecturer_name && c.lecturer_name !== "Unconfirmed";
+    const del = c.has_sessions ? `<span class="muted">Has lecture records, so it cannot be deleted.</span>`
+      : `<button class="danger" onclick="toolDelete('${c.course_id}', ${c.catalogue_id ? "'" + c.catalogue_id + "'" : "null"})">Delete</button>`;
+    return `<div style="padding:8px 0;border-top:1px solid var(--line)">
+      <strong>${esc(c.course_code)}</strong> ${esc(c.course_title)}
+      <button class="icon" aria-label="Edit course" title="Edit" onclick="toolEdit('${c.course_id}')">&#9998;</button>
+      <div class="muted">${esc(c.class_label || "")} &middot; ${MODES[c.study_mode] || ""} &middot; ${AUDS[c.audience] || ""}${c.class_dept ? " &middot; class of " + esc(c.class_dept) : ""}</div>
+      ${linked ? `<div>Lecturer: <strong>${esc(c.lecturer_name)}</strong></div>`
+        : `<div class="actions"><select id="al-${c.course_id}"><option value="">Choose a lecturer</option>${staffOptions()}</select>
+           <button onclick="toolAllocate('${c.course_id}')">Allocate</button></div>`}
+      <div>${del}</div>
+      <div id="ed-${c.course_id}"></div><span id="alm-${c.course_id}" class="muted"></span></div>`;
+  }).join("") : `<p class="muted">No courses for this selection.</p>`;
+}
+async function loadScoped() {
+  const box = $("scoped"); if (!box) return;
+  const d = $("sc-d") ? $("sc-d").value : "";
+  if (!d) { box.innerHTML = `<p class="panel">No department in your scope.</p>`; return; }
+  const { data, error } = await sb.rpc("scoped_courses", { p_dept: d, p_mode: $("sc-m").value || null, p_level: $("sc-l").value ? +$("sc-l").value : null });
+  if (error) { box.innerHTML = `<p class="err">${esc(error.message)}</p>`; return; }
+  window._tools.courses = (window._tools.courses || []).filter(x => x.src !== "scoped").concat((data || []).map(x => Object.assign({ src: "scoped" }, x)));
+  box.innerHTML = courseRows(data || []);
+}
+async function loadHosted() {
+  const box = $("hosted"); if (!box) return;
+  const d = $("sc-d") ? $("sc-d").value : "";
+  if (!d) { box.innerHTML = ""; return; }
+  const { data, error } = await sb.rpc("hosted_general_courses", { p_dept: d });
+  if (error) { box.innerHTML = `<p class="err">${esc(error.message)}</p>`; return; }
+  window._tools.courses = (window._tools.courses || []).filter(x => x.src !== "hosted").concat((data || []).map(x => Object.assign({ src: "hosted" }, x)));
+  box.innerHTML = courseRows(data || []);
+}
+async function toolDelete(id, cat) {
+  const out = $("alm-" + id);
+  if (!confirm("Delete this course? " + (cat ? "It will be removed from every class that has it." : "It will be removed from this class."))) return;
+  const r = cat ? await sb.rpc("delete_catalogue_course", { p_cat: cat }) : await sb.rpc("delete_course_record", { p_course: id });
+  if (r.error) { out.className = "err"; out.textContent = r.error.message; return; }
+  out.className = "ok"; out.textContent = r.data;
+  setTimeout(() => { loadScoped(); loadHosted(); }, 700);
 }
 function toolLecturers() {
   const T = window._tools || {}, did = $("ac-d") ? $("ac-d").value : "";
