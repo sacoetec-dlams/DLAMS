@@ -863,7 +863,7 @@ function ctlHtml(s) {
     <div class="actions"><button class="primary" onclick="activate('${id}')">Activate QR</button><button onclick="cancelSession('${id}')">Cancel session</button></div>`;
   if (st === "active") return `<div class="qr">${qrImg(s.qr_token)}</div>
     <p>Time left: <strong id="t${id}"></strong></p><p class="muted">Screenshots are not allowed. Students scan this with their phone camera.</p>
-    <div class="actions"><button onclick="act('pause_session','${id}')">Pause</button><button onclick="act('stop_session','${id}')">Stop</button><button class="danger" onclick="terminate('${id}')">Terminate</button></div>`;
+    <div class="actions"><button class="primary" onclick="recentre('${id}')">Set the fence to my position</button><button onclick="act('pause_session','${id}')">Pause</button><button onclick="act('stop_session','${id}')">Stop</button><button class="danger" onclick="terminate('${id}')">Terminate</button></div>`;
   if (st === "paused" || st === "timeup") return `<p class="muted">${st === "timeup" ? "The time has ended and the session paused itself." : "The session is paused."}</p>
     <label for="m${id}">Minutes to resume for</label><input id="m${id}" type="number" min="1" max="240" value="${s.duration_minutes || 10}">
     <div class="actions"><button class="primary" onclick="resume('${id}')">Resume</button><button onclick="act('stop_session','${id}')">Stop</button><button class="danger" onclick="terminate('${id}')">Terminate</button></div>`;
@@ -2361,6 +2361,17 @@ function downloadRegisterWord() {
   a.href = URL.createObjectURL(blob);
   a.download = title.replace(/[^A-Za-z0-9 _-]/g, "").trim() + " register.doc";
   document.body.appendChild(a); a.click(); a.remove();
+}
+
+/* Move the classroom fence to the phone of whoever is running the lecture (use it inside the room) */
+async function recentre(id) {
+  try {
+    const pos = await getPos();
+    const rad = $("rad" + id) ? +$("rad" + id).value : null;
+    const r = await sb.rpc("recentre_session", { p_session: id, p_lat: pos.latitude, p_lng: pos.longitude, p_radius: rad || null });
+    gmsg(!r.error, r.error ? r.error.message : r.data);
+    await poll();
+  } catch (e) { gmsg(false, e.message); }
 }
 
 /* ---------- Start ---------- */
