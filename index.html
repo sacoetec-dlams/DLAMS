@@ -544,7 +544,8 @@ async function approve(id) {
 }
 /* Lists are in serial order: the last three digits of the matric or DLAMS ID (EDUC2410002 -> 002) */
 const serialNo = id => { const d = String(id || "").replace(/\D/g, "").slice(-3); return d ? parseInt(d, 10) : 1e9; };
-const cmpNo = (a, b) => (serialNo(a) - serialNo(b)) || String(a).localeCompare(String(b));
+const routeGroup = id => /^EDUC[0-9]{7}$/.test(String(id || "")) ? 0 : /^EDUC[0-9]{2}02[0-9]{5}$/.test(String(id || "")) ? 1 : 2;
+const cmpNo = (a, b) => (routeGroup(a) - routeGroup(b)) || (serialNo(a) - serialNo(b)) || String(a).localeCompare(String(b));
 
 /* Reasons for denying and removing students. The administrator and HOC/CG choose one; "other" needs a sentence. */
 const DENY_REASONS = { incomplete: "Incomplete registration", wrong_details: "Wrong details", not_eligible: "Not eligible for this department", other: "Other" };
@@ -725,7 +726,7 @@ async function printSheet() {
   const serial = id => { const x = String(id).match(/(\d{3})$/) || String(id).match(/(\d+)$/); return x ? parseInt(x[1], 10) : 1e9; };
   const { data: ro, error: re } = await sb.rpc("course_roster", { p_course: c.id });
   if (re) { m.className = "err"; m.textContent = re.message; return; }
-  const bySerial = (a, b) => serial(a.login_id) - serial(b.login_id) || a.login_id.localeCompare(b.login_id);
+  const bySerial = (a, b) => cmpNo(a.login_id, b.login_id);
   const studs = (ro || []).filter(r => r.kind === "core").sort(bySerial), extras = (ro || []).filter(r => r.kind !== "core").sort(bySerial);
   const cols = Math.max(10, lect.length), aw = (34 / cols).toFixed(2), cl = me.cls;
   const head = `<thead><tr><th rowspan="2" style="width:4%">S/N</th><th rowspan="2" style="width:21%">NAME</th><th rowspan="2" style="width:11%">MATRIC NO</th>
@@ -1218,7 +1219,7 @@ function renderStaff() {
   stopTimers();
   const p = me.prof;
   const leader = me.roles.some(r => ["dean", "subdean", "hod"].includes(r.role));
-  show(`<div class="bar"><div><h1>${esc(p.full_name)}</h1><p class="muted">${esc(p.login_id)} · Lecturer</p></div>
+  show(`<div class="bar"><div><h1>${esc(p.full_name)}</h1><p class="muted">${esc(p.login_id)} · ${[...new Set(["LECTURER", ...me.roles.map(r => ({ dean: "DEAN", subdean: "SUB-DEAN", hod: "HEAD OF DEPARTMENT" })[r.role]).filter(Boolean)])].join(" · ")}</p></div>
     <button onclick="signOut()">Sign out</button></div>
     <div class="shell"><nav class="side" aria-label="Lecturer menu">
       <button id="nv-courses" onclick="sec('courses')">My courses</button>
@@ -2031,12 +2032,12 @@ async function markLate(sid, pid) {
 }
 
 /* Messages show at the top of the page and fade after a few seconds */
-function flashMsg(msg) {
+function flashMsg(msg, ms) {
   const app = $("app"); if (!app) return;
   const b = document.createElement("div"); b.className = "panel"; b.setAttribute("role", "status");
   b.style.cssText = "margin:8px 0;white-space:pre-line;border-color:var(--accent)";
   b.textContent = msg; app.insertBefore(b, app.firstChild);
-  setTimeout(() => b.remove(), 8000);
+  setTimeout(() => b.remove(), ms || 8000);
 }
 
 /* Shows the appointment messages (Dean, Sub-dean, HOD) once, then marks them read */
@@ -2044,7 +2045,7 @@ async function loadRoleBanners() {
   const { data } = await sb.from("notifications").select("id,message").eq("profile_id", me.prof.id)
     .eq("kind", "role_assigned").is("read_at", null).order("created_at");
   for (const n of (data || [])) {
-    flashMsg(n.message);
+    flashMsg(n.message, 20000);
     await sb.rpc("mark_notification_read", { p_id: n.id });
   }
 }
