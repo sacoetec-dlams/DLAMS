@@ -403,20 +403,10 @@ function editCourse(id) {
 
 async function saveEdit(id) {
   $("es").disabled = true;
-  const { error } = await sb.rpc("update_course", {
-    p_course: id, p_code: $("ec").value, p_title: $("et").value, p_lecturer_name: $("en").value,
-    p_lecturer_id: $("ed").value.trim() || null, p_unlink: !!($("eu") && $("eu").checked) });
-  const old = saved.find(x => x.id === id);
-  const e2 = (!error && old && $("ea").value !== old.audience) ? (await sb.rpc("set_course_audience", { p_course: id, p_audience: $("ea").value })).error : null;
-  if (error || e2) { $("es").disabled = false; $("em").className = "err"; $("em").textContent = (error || e2).message; return; }
-  const nmNow = $("en").value.trim(), idNow = $("ed").value.trim();
-  if (old && (old.lecturer_name !== nmNow || !old.lecturer_profile_id || idNow)) {
-    const { data: as, error: ae } = await sb.rpc("assign_course_lecturer", { p_course: id, p_name: nmNow, p_login: idNow || null });
-    if (ae) { $("es").disabled = false; $("em").className = "err"; $("em").textContent = ae.message; return; }
-    if (as && as.temp_password) flashMsg("A lecturer account was created.\nDLAMS ID: " + as.lecturer_id + "\nTemporary password: " + as.temp_password + "\n\nGive this only to the lecturer. They must change the password at first sign-in.");
-  }
-  $("editbox").innerHTML = ""; $("msg").className = "ok"; $("msg").textContent = "Course updated.";
-  loadSaved();
+  const { data, error } = await sb.rpc("save_course_edit", { p_course: id, p_code: $("ec").value, p_title: $("et").value,
+    p_audience: $("ea") ? $("ea").value : "all", p_name: $("en").value, p_login: $("ed").value.trim() || null });
+  if (error) { $("es").disabled = false; $("em").className = "err"; $("em").textContent = error.message; flashMsg(error.message, 15000); return; }
+  $("editbox").innerHTML = ""; flashMsg(data, 6000); loadSaved();
 }
 
 async function removeCourse(id) {
@@ -1899,6 +1889,7 @@ async function admCourses(m) {
   const A = window._adm;
   const [alloc, cat, sf] = await Promise.all([sb.rpc("allocatable_courses"), sb.rpc("catalogue_list"), sb.rpc("staff_in_scope")]);
   const staffOpts = (sf.data || []).slice().sort((a, b) => cmpNo(a.login_id, b.login_id)).map(x => `<option value="${esc(x.login_id)}">${esc(x.full_name)} (${esc(x.login_id)})</option>`).join("");
+  window._tools = Object.assign(window._tools || {}, { courses: alloc.data || [] });
   m.innerHTML = `<h2>Add a course</h2>
     <div class="panel"><div class="fields">
       ${pickerHtml("cc", normDepts(A.depts), () => {})}
@@ -1912,6 +1903,17 @@ async function admCourses(m) {
       <div class="actions"><select id="al-${c.course_id}"><option value="">Choose a lecturer</option>${staffOpts}</select>
       <button onclick="admAllocate('${c.course_id}')">Allocate</button> <span id="alm-${c.course_id}" class="muted"></span></div></div>`).join("")
       : `<p class="muted">No courses to allocate yet.</p>`}
+    <h2>Place courses and edit them</h2>
+    ${(alloc.data || []).length ? alloc.data.map(c => `<div style="padding:8px 0;border-top:1px solid var(--line)"><strong>${esc(c.course_code)}</strong> ${esc(c.course_title)}
+      <button class="icon" aria-label="Edit course" title="Edit" onclick="toolEdit('${c.course_id}')">&#9998;</button>
+      <div class="muted">${esc(c.class_label)} &middot; owner now: ${esc(c.host_dept || "not placed")}</div>
+      <div class="actions">${pickerHtml("po-" + c.course_id, normDepts(A.depts), () => {})}</div>
+      <div class="actions"><select id="pl-${c.course_id}" aria-label="Level">${[100, 200, 300, 400].map(l => `<option value="${l}">${l} Level</option>`).join("")}</select>
+        <select id="pm-${c.course_id}" aria-label="Study mode">${Object.entries(MODES).map(([k, v]) => `<option value="${k}" ${k === c.study_mode ? "selected" : ""}>${v}</option>`).join("")}</select>
+        <select id="pa-${c.course_id}" aria-label="Who takes it">${Object.entries(AUDS).map(([k, v]) => `<option value="${k}" ${k === c.audience ? "selected" : ""}>${v}</option>`).join("")}</select>
+        <button onclick="admPlace('${c.course_id}')">Save owner</button></div>
+      <div id="ed-${c.course_id}"></div><span id="alm-${c.course_id}" class="muted"></span></div>`).join("")
+      : `<p class="muted">No courses yet.</p>`}
     <h2>Course catalogue</h2>
     ${(cat.data || []).length ? `<div class="wrap"><table><tr><th>Code</th><th>Title</th><th>Owning department</th><th>Type</th></tr>${cat.data.map(c =>
       `<tr><td>${esc(c.code)}</td><td>${esc(c.title)}</td><td>${esc(c.owner_dept || "")}</td><td>${c.is_general ? "General" : "Departmental"}</td></tr>`).join("")}</table></div>`
@@ -2080,6 +2082,15 @@ function refillPick(p) {
 }
 function pickDept(p) { const P = window._pick[p]; if (P && P.fn) P.fn(); }
 function loadAll() { loadScoped(); loadHosted(); }
+
+async function admPlace(cid) {
+  const dep = $("po-" + cid + "-d").value;
+  if (!dep) return admMsg("Choose a department first.", true);
+  const r = await sb.rpc("admin_place_course", { p_course: cid, p_dept: dep, p_level: +$("pl-" + cid).value,
+    p_mode: $("pm-" + cid).value, p_audience: $("pa-" + cid).value });
+  admMsg(r.error ? r.error.message : r.data, !!r.error);
+  if (!r.error) admSec("crs");
+}
 
 /* ---------- Start ---------- */
 (async () => {
