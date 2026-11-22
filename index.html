@@ -153,7 +153,7 @@ function renderHome() {
   const p = me.prof;
   const tabs = me.hoc ? `<div class="tabs" role="group" aria-label="Switch dashboard">
       <button aria-pressed="${tab === "student"}" onclick="setTab('student')">Student</button>
-      <button aria-pressed="${tab === "hoc"}" onclick="setTab('hoc')">${me.hoc.slot === "main" ? "HOC/CG" : "Assistant HOC/CG"}</button></div>` : "";
+      <button aria-pressed="${tab === "hoc"}" onclick="setTab('hoc')">${me.hoc.slot === "main" ? "HOC/CG" : "Assistant HOC/CG"}</button>${isAdmin() ? `<button onclick="renderAdminDash()">Administrator</button>` : ""}</div>` : "";
   show(`
     <div class="bar">
       <div><h1>${esc(p.full_name)}</h1>
@@ -1143,7 +1143,7 @@ function admDrawList() {
   box.innerHTML = list.length ? `<div class="wrap"><table><tr><th>Name</th><th>Matric</th><th>Status</th><th></th></tr>${list.map(p =>
     `<tr><td>${esc(p.full_name)}</td><td>${esc(p.login_id)}</td><td>${esc(p.status)}</td>
      <td style="white-space:nowrap"><button class="icon" aria-label="Edit student" title="Edit" onclick="editAdmStudent('${p.id}')">&#9998;</button>
-     <button onclick="resetPw('${p.id}')">Reset password</button>
+     <button onclick="admView('${p.id}')">View</button> <button onclick="resetPw('${p.id}')">Reset password</button>
      ${p.status === "denied" ? `<button class="primary" onclick="approveAny('${p.id}')">Approve</button>` : ""}
      ${["denied", "suspended"].includes(p.status) ? `<button class="danger" onclick="deleteRecord('${p.id}')">Delete record</button>` : ""}</td></tr>`).join("")}</table></div>`
     : `<p class="muted">No students in this selection.</p>`;
@@ -1869,9 +1869,9 @@ function admStaffList() {
     tree[sc] = tree[sc] || {}; (tree[sc][dp] = tree[sc][dp] || []).push(x); });
   const line = x => `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0;border-top:1px solid var(--line)">
     <span style="min-width:200px"><strong>${esc(x.full_name)}</strong> <span class="muted">${esc(x.login_id)}</span></span>
-    ${pickerHtml("hd-" + x.profile_id, normDepts(A.depts), () => {})}
+    ${pickerHtml("hd-" + x.profile_id, normDepts(A.depts), () => {}, (A.schools.find(s => s.name === x.school_name) || {}).id, (A.depts.find(d => d.name === x.dept_name && d.school_id === (A.schools.find(s => s.name === x.school_name) || {}).id) || {}).id)}
     <button onclick="admSetHome('${x.profile_id}')">Set</button>
-    <button onclick="admResetPw('${x.profile_id}')">Reset password</button>
+    <button onclick="admView('${x.profile_id}')">View</button> <button onclick="admResetPw('${x.profile_id}')">Reset password</button>
     <button class="danger" onclick="admDelStaff('${x.profile_id}')">Delete</button></div>`;
   const keys = o => Object.keys(o).sort();
   $("sl-list").innerHTML = keys(tree).length ? keys(tree).map(sc =>
@@ -1903,16 +1903,11 @@ async function admCourses(m) {
       <div class="actions"><select id="al-${c.course_id}"><option value="">Choose a lecturer</option>${staffOpts}</select>
       <button onclick="admAllocate('${c.course_id}')">Allocate</button> <span id="alm-${c.course_id}" class="muted"></span></div></div>`).join("")
       : `<p class="muted">No courses to allocate yet.</p>`}
-    <h2>Place courses and edit them</h2>
+    <h2>Courses: edit and place</h2>
     ${(alloc.data || []).length ? alloc.data.map(c => `<div style="padding:8px 0;border-top:1px solid var(--line)"><strong>${esc(c.course_code)}</strong> ${esc(c.course_title)}
-      <button class="icon" aria-label="Edit course" title="Edit" onclick="toolEdit('${c.course_id}')">&#9998;</button>
-      <div class="muted">${esc(c.class_label)} &middot; owner now: ${esc(c.host_dept || "not placed")}</div>
-      <div class="actions">${pickerHtml("po-" + c.course_id, normDepts(A.depts), () => {})}</div>
-      <div class="actions"><select id="pl-${c.course_id}" aria-label="Level">${[100, 200, 300, 400].map(l => `<option value="${l}">${l} Level</option>`).join("")}</select>
-        <select id="pm-${c.course_id}" aria-label="Study mode">${Object.entries(MODES).map(([k, v]) => `<option value="${k}" ${k === c.study_mode ? "selected" : ""}>${v}</option>`).join("")}</select>
-        <select id="pa-${c.course_id}" aria-label="Who takes it">${Object.entries(AUDS).map(([k, v]) => `<option value="${k}" ${k === c.audience ? "selected" : ""}>${v}</option>`).join("")}</select>
-        <button onclick="admPlace('${c.course_id}')">Save owner</button></div>
-      <div id="ed-${c.course_id}"></div><span id="alm-${c.course_id}" class="muted"></span></div>`).join("")
+      <button class="icon" aria-label="Edit course" title="Edit" onclick="admEdit('${c.course_id}')">&#9998;</button>
+      <div class="muted">${esc(c.class_label)} &middot; owner now: ${esc(c.host_dept || "not placed")} &middot; ${MODES[c.study_mode] || ""} &middot; ${AUDS[c.audience] || ""}</div>
+      <div id="ed-${c.course_id}"></div></div>`).join("")
       : `<p class="muted">No courses yet.</p>`}
     <h2>Course catalogue</h2>
     ${(cat.data || []).length ? `<div class="wrap"><table><tr><th>Code</th><th>Title</th><th>Owning department</th><th>Type</th></tr>${cat.data.map(c =>
@@ -2065,14 +2060,14 @@ async function loadAppointedBy() {
 function normDepts(list) {
   return (list || []).map(d => ({ id: d.dept_id || d.id, name: d.dept_name || d.name, school_id: d.school_id, school_name: d.school_name || schoolOf(d) }));
 }
-function pickerHtml(p, depts, fn) {
+function pickerHtml(p, depts, fn, selSchool, selDept) {
   const sch = [...new Map(depts.map(d => [d.school_id, { id: d.school_id, name: d.school_name || "" }])).values()]
     .filter(x => x.id).sort((a, b) => a.name.localeCompare(b.name));
   window._pick = window._pick || {};
   window._pick[p] = { depts, fn: fn || (() => {}) };
-  const first = sch[0] ? sch[0].id : "";
-  return `<div><label for="${p}-s">School</label><select id="${p}-s" onchange="refillPick('${p}')">${sch.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div>
-    <div><label for="${p}-d">Department</label><select id="${p}-d" onchange="pickDept('${p}')">${depts.filter(d => d.school_id === first).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join("")}</select></div>`;
+  const first = selSchool || (sch[0] ? sch[0].id : "");
+  return `<div><label for="${p}-s">School</label><select id="${p}-s" onchange="refillPick('${p}')">${sch.map(x => `<option value="${x.id}" ${x.id === first ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+    <div><label for="${p}-d">Department</label><select id="${p}-d" onchange="pickDept('${p}')">${depts.filter(d => d.school_id === first).map(d => `<option value="${d.id}" ${d.id === selDept ? "selected" : ""}>${esc(d.name)}</option>`).join("")}</select></div>`;
 }
 function refillPick(p) {
   const P = window._pick[p], sid = $(p + "-s").value;
@@ -2083,13 +2078,43 @@ function refillPick(p) {
 function pickDept(p) { const P = window._pick[p]; if (P && P.fn) P.fn(); }
 function loadAll() { loadScoped(); loadHosted(); }
 
-async function admPlace(cid) {
-  const dep = $("po-" + cid + "-d").value;
-  if (!dep) return admMsg("Choose a department first.", true);
-  const r = await sb.rpc("admin_place_course", { p_course: cid, p_dept: dep, p_level: +$("pl-" + cid).value,
-    p_mode: $("pm-" + cid).value, p_audience: $("pa-" + cid).value });
-  admMsg(r.error ? r.error.message : r.data, !!r.error);
-  if (!r.error) admSec("crs");
+async function admEdit(id) {
+  const c = (window._tools.courses || []).find(x => x.course_id === id); if (!c) return;
+  const depts = normDepts(window._adm.depts);
+  $("ed-" + id).innerHTML = `<div class="panel" style="margin-top:8px"><strong>Edit ${esc(c.course_code)}</strong>
+    <div class="fields" style="margin-top:8px">
+      <div><label for="ae-c-${id}">Course code</label><input id="ae-c-${id}" value="${esc(c.course_code)}"></div>
+      <div class="wide"><label for="ae-t-${id}">Course title</label><input id="ae-t-${id}" value="${esc(c.course_title)}"></div>
+      <div><label for="ae-k-${id}">Type of course</label><select id="ae-k-${id}"><option value="departmental">Departmental course</option><option value="general">General course</option></select></div>
+      ${pickerHtml("ae-" + id, depts, () => {})}
+      <div><label for="ae-l-${id}">Level</label><select id="ae-l-${id}">${[100, 200, 300, 400].map(l => `<option value="${l}" ${String(l) === String(c.level) ? "selected" : ""}>${l} Level</option>`).join("")}</select></div>
+      <div><label for="ae-m-${id}">Study mode</label><select id="ae-m-${id}">${Object.entries(MODES).map(([k, v]) => `<option value="${k}" ${k === c.study_mode ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div><label for="ae-a-${id}">Who takes it</label><select id="ae-a-${id}">${Object.entries(AUDS).map(([k, v]) => `<option value="${k}" ${k === c.audience ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+    </div>
+    <div class="actions"><button class="primary" onclick="admSaveEdit('${id}')">Save</button><button onclick="$('ed-${id}').innerHTML=''">Cancel</button></div>
+    <p id="aem-${id}" role="status"></p></div>`;
+}
+async function admSaveEdit(id) {
+  const out = $("aem-" + id);
+  const r1 = await sb.rpc("save_course_edit", { p_course: id, p_code: $("ae-c-" + id).value, p_title: $("ae-t-" + id).value,
+    p_audience: $("ae-a-" + id).value, p_name: null, p_login: null });
+  if (r1.error) { out.className = "err"; out.textContent = r1.error.message; return; }
+  const r2 = await sb.rpc("admin_place_course", { p_course: id, p_dept: $("ae-" + id + "-d").value, p_level: +$("ae-l-" + id).value,
+    p_mode: $("ae-m-" + id).value, p_audience: $("ae-a-" + id).value, p_kind: $("ae-k-" + id).value });
+  if (r2.error) { out.className = "err"; out.textContent = r2.error.message; return; }
+  admMsg(r2.data); admSec("crs");
+}
+
+async function admView(pid) {
+  const { data, error } = await sb.rpc("admin_view_user", { p_profile: pid });
+  if (error) return admMsg(error.message, true);
+  const box = $("astu") || $("admsec"), p = data.profile, roles = (data.roles || []).join(", ") || "none";
+  box.innerHTML = `<div class="panel" style="margin-top:12px"><strong>Viewing ${esc(p.full_name)}</strong> <span class="muted">read only</span>
+    <p class="muted">DLAMS ID ${esc(p.login_id)} &middot; ${esc(p.account_type)} &middot; status ${esc(p.status)} &middot; roles: ${esc(roles)}${p.phone ? " &middot; phone " + esc(p.phone) : ""}</p>
+    ${(data.courses || []).length ? `<div class="wrap"><table><tr><th>Code</th><th>Title</th><th>Lecturer</th><th>Attended</th></tr>${data.courses.map(c =>
+      `<tr><td>${esc(c.code)}</td><td>${esc(c.title)}</td><td>${esc(c.lecturer)}</td><td>${c.attended === null ? "-" : c.attended + " of " + c.held}</td></tr>`).join("")}</table></div>`
+      : `<p class="muted">No courses.</p>`}
+    <div class="actions"><button onclick="$('${box.id}').innerHTML=''">Close</button></div></div>`;
 }
 
 /* ---------- Start ---------- */
