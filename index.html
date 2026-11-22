@@ -1538,6 +1538,11 @@ async function loadStaffTools() {
   const [dp, st] = await Promise.all([sb.rpc("my_scope_departments"), sb.rpc("staff_in_scope")]);
   const depts = dp.data || [], staff = st.data || [];
   window._tools = { depts, staff, courses: [] };
+  { const gh = await sb.from("general_hosts").select("department_id");
+    window._genHosts = new Set((gh.data || []).map(x => x.department_id));
+    const [ad, sc2] = await Promise.all([sb.from("departments").select("id,name,school_id").order("name"), sb.from("schools").select("id,name")]);
+    const sn = Object.fromEntries((sc2.data || []).map(x => [x.id, x.name]));
+    window._allDepts = (ad.data || []).map(d => ({ id: d.id, name: d.name, school_id: d.school_id, school_name: sn[d.school_id] || "" })); }
   const deanScope = isAdmin() || me.roles.some(r => ["dean", "subdean"].includes(r.role));
   const deptOpts = depts.map(d => `<option value="${d.dept_id}">${esc(d.school_name)} - ${esc(d.dept_name)}</option>`).join("");
   const levelOpts = [100, 200, 300, 400].map(l => `<option value="${l}">${l} Level</option>`).join("");
@@ -1545,13 +1550,17 @@ async function loadStaffTools() {
   const addForm = `<div class="panel"><strong>Add a course</strong>
     <p class="muted">The course is linked to every class of this level and study mode in the department, and to the lecturer you choose.</p>
     <div class="fields">
-      ${deanScope ? `${pickerHtml("ac", normDepts(depts), toolLecturers)}`
+      ${deanScope ? `${pickerHtml("ac", normDepts(depts), toolOwnerChanged)}`
                   : `<input type="hidden" id="ac-d" value="${depts[0] ? depts[0].dept_id : ""}">`}
-      <div><label for="ac-l">Level</label><select id="ac-l">${levelOpts}</select></div>
-      <div><label for="ac-m">Study mode</label><select id="ac-m">${modeOpts}</select></div>
+      <div><label for="ac-l">Level</label><select id="ac-l" onchange="toolOwnerChanged()">${levelOpts}</select></div>
+      <div><label for="ac-m">Study mode</label><select id="ac-m" onchange="toolOwnerChanged()">${modeOpts}</select></div>
       <div><label for="ac-c">Course code</label><input id="ac-c" placeholder="ENT 211"></div>
       <div class="wide"><label for="ac-t">Course title</label><input id="ac-t"></div>
-      <div class="wide"><label for="ac-lec">Lecturer from the owning department</label><select id="ac-lec"></select></div>
+      <div class="wide"><strong>Lecturer</strong> <span class="muted">Choose the school and department the lecturer is from.</span></div>
+      ${pickerHtml("lp", window._allDepts || [], toolLecturers)}
+      <div class="wide"><label for="ac-lec">Lecturer</label><select id="ac-lec"></select>
+        <button onclick="askAdminForLecturer()">Not in the list? Ask the administrator</button></div>
+      <div class="wide" id="ac-targets"></div>
     </div>
     <div class="actions"><button class="primary" onclick="toolAddCourse()">Add course</button></div><p id="ac-m2" role="status"></p></div>`;
   const selectors = `<div class="panel"><strong>Show courses</strong><div class="fields">
@@ -1587,7 +1596,7 @@ function courseRows(list) {
     return `<div style="padding:8px 0;border-top:1px solid var(--line)">
       <strong>${esc(c.course_code)}</strong> ${esc(c.course_title)}
       <button class="icon" aria-label="Edit course" title="Edit" onclick="toolEdit('${c.course_id}')">&#9998;</button>
-      <div class="muted">${esc(c.class_label || "")} &middot; ${MODES[c.study_mode] || ""} &middot; ${AUDS[c.audience] || ""}${c.class_dept ? " &middot; class of " + esc(c.class_dept) : ""}</div>
+      <div class="muted">${esc(c.class_label || "")} &middot; ${MODES[c.study_mode] || ""} &middot; ${AUDS[c.audience] || ""}${c.taken ? " &middot; taken by " + c.taken.map(esc).join(", ") : (c.class_dept ? " &middot; class of " + esc(c.class_dept) : "")}</div>
       ${linked ? `<div>Lecturer: <strong>${esc(c.lecturer_name)}</strong></div>`
         : `<div class="actions"><select id="al-${c.course_id}"><option value="">Choose a lecturer</option>${staffOptions()}</select>
            <button onclick="toolAllocate('${c.course_id}')">Allocate</button></div>`}
@@ -1605,6 +1614,17 @@ async function loadScoped() {
   window._tools.courses = (window._tools.courses || []).filter(x => x.src !== "scoped").concat((data || []).map(x => Object.assign({ src: "scoped" }, x)));
   box.innerHTML = courseRows(data || []);
 }
+function groupCourses(list) {
+  const out = [], seen = {};
+  (list || []).forEach(c => {
+    if (!c.catalogue_id) { out.push(c); return; }
+    if (!seen[c.catalogue_id]) { seen[c.catalogue_id] = Object.assign({}, c, { taken: [] }); out.push(seen[c.catalogue_id]); }
+    const g = seen[c.catalogue_id], label = c.class_dept || (c.class_label || "").split(",")[0];
+    if (label && !g.taken.includes(label)) g.taken.push(label);
+  });
+  out.forEach(c => { if (c.taken) c.taken.sort(); });
+  return out;
+}
 async function loadHosted() {
   const box = $("hosted"); if (!box) return;
   const d = $("sc-d") ? $("sc-d").value : "";
@@ -1612,28 +1632,60 @@ async function loadHosted() {
   const { data, error } = await sb.rpc("hosted_general_courses", { p_dept: d });
   if (error) { box.innerHTML = `<p class="err">${esc(error.message)}</p>`; return; }
   window._tools.courses = (window._tools.courses || []).filter(x => x.src !== "hosted").concat((data || []).map(x => Object.assign({ src: "hosted" }, x)));
-  box.innerHTML = courseRows(data || []);
+  box.innerHTML = courseRows(groupCourses(data || []));
 }
 async function toolDelete(id, cat) {
-  const out = $("alm-" + id);
+  const out = $("alm-" + id) || { className: "", textContent: "" };
   if (!confirm("Delete this course? " + (cat ? "It will be removed from every class that has it." : "It will be removed from this class."))) return;
   const r = cat ? await sb.rpc("delete_catalogue_course", { p_cat: cat }) : await sb.rpc("delete_course_record", { p_course: id });
   if (r.error) { out.className = "err"; out.textContent = r.error.message; return; }
   out.className = "ok"; out.textContent = r.data;
-  setTimeout(() => { loadScoped(); loadHosted(); }, 700);
+  flashMsg(r.data, 8000);
+  setTimeout(() => { loadScoped(); loadHosted(); if ($("admsec")) admSec("crs"); }, 700);
 }
-function toolLecturers() {
-  const T = window._tools || {}, did = $("ac-d") ? $("ac-d").value : "";
-  const dep = (T.depts || []).find(d => d.dept_id === did);
-  const list = (T.staff || []).filter(x => dep && x.dept_name === dep.dept_name).sort((a, b) => cmpNo(a.login_id, b.login_id));
-  $("ac-lec").innerHTML = list.length ? list.map(x => `<option value="${esc(x.login_id)}">${esc(x.full_name)} (${esc(x.login_id)})</option>`).join("")
-    : `<option value="">No lecturers in this department yet. Add them first</option>`;
+async function toolLecturers() {
+  const sel = $("ac-lec"), did = $("lp-d") ? $("lp-d").value : "";
+  if (!sel) return;
+  if (!did) { sel.innerHTML = `<option value="">Choose a department first</option>`; return; }
+  const { data, error } = await sb.rpc("staff_by_department", { p_dept: did });
+  if (error) { sel.innerHTML = `<option value="">${esc(error.message)}</option>`; return; }
+  sel.innerHTML = (data && data.length) ? data.map(x => `<option value="${esc(x.login_id)}">${esc(x.full_name)} (${esc(x.login_id)})</option>`).join("")
+    : `<option value="">No lecturers in this department yet</option>`;
 }
+function toolOwnerChanged() {
+  const box = $("ac-targets"); if (!box) return;
+  const owner = $("ac-d") ? $("ac-d").value : "", level = $("ac-l") ? $("ac-l").value : "";
+  if (!owner || !(window._genHosts && window._genHosts.has(owner))) { box.innerHTML = ""; return; }
+  const bySchool = {};
+  (window._allDepts || []).forEach(d => { (bySchool[d.school_name] = bySchool[d.school_name] || []).push(d); });
+  box.innerHTML = `<div class="panel"><strong>Which departments take this course?</strong>
+    <p class="muted">All departments are ticked at ${esc(level)} Level. Untick any that do not take it.</p>
+    ${Object.keys(bySchool).sort().map(sn => `<details class="dd"><summary>${esc(sn)}</summary>
+      ${bySchool[sn].map(d => `<label class="check"><input type="checkbox" id="tg-${d.id}" checked> ${esc(d.name)}</label>`).join("")}</details>`).join("")}</div>`;
+}
+function askAdminForLecturer() {
+  const name = prompt("Full name of the lecturer:"); if (!name || !name.trim()) return;
+  const sch = $("lp-s") && $("lp-s").selectedIndex >= 0 ? $("lp-s").options[$("lp-s").selectedIndex].text : "";
+  const dep = $("lp-d") && $("lp-d").selectedIndex >= 0 ? $("lp-d").options[$("lp-d").selectedIndex].text : "";
+  const msg = "Please add this lecturer: " + name.trim() + ", " + sch + " - " + dep + ". They are needed for a course I am adding.";
+  const p = $("chatpanel");
+  if (!p) return flashMsg("Chat is not available here.", 10000);
+  p.hidden = false;
+  loadChat().then(() => { const t = $("chattxt"); if (t) { t.value = msg; t.focus(); } });
+  flashMsg("Your message is ready in the chat. Check it and press Send.", 10000);
+}
+
 async function toolAddCourse() {
   const out = $("ac-m2"), login = $("ac-lec").value;
-  if (!login) { out.className = "err"; out.textContent = "Choose a lecturer of this department first."; return; }
-  const r = await sb.rpc("add_course_as_leader", { p_dept: $("ac-d").value, p_level: +$("ac-l").value, p_mode: $("ac-m").value,
-    p_code: $("ac-c").value, p_title: $("ac-t").value, p_login: login });
+  if (!login) { out.className = "err"; out.textContent = "Choose a lecturer first, or press Not in the list to ask the administrator."; return; }
+  const owner = $("ac-d").value, gen = !!(window._genHosts && window._genHosts.has(owner));
+  let depts = null;
+  if (gen) {
+    depts = Array.from(document.querySelectorAll('#ac-targets input[id^="tg-"]')).filter(x => x.checked).map(x => x.id.slice(3));
+    if (!depts.length) { out.className = "err"; out.textContent = "Tick at least one department that takes this course."; return; }
+  }
+  const r = await sb.rpc("add_course_as_leader", { p_dept: owner, p_level: +$("ac-l").value, p_mode: $("ac-m").value,
+    p_code: $("ac-c").value, p_title: $("ac-t").value, p_login: login, p_depts: depts });
   if (r.error) { out.className = "err"; out.textContent = r.error.message; return; }
   out.className = "ok"; out.textContent = r.data;
   setTimeout(loadStaffTools, 900);
@@ -1913,9 +1965,10 @@ async function admCourses(m) {
       <button onclick="admAllocate('${c.course_id}')">Allocate</button> <span id="alm-${c.course_id}" class="muted"></span></div></div>`).join("")
       : `<p class="muted">No courses to allocate yet.</p>`}
     <h2>Courses: edit and place</h2>
-    ${(alloc.data || []).length ? alloc.data.map(c => `<div style="padding:8px 0;border-top:1px solid var(--line)"><strong>${esc(c.course_code)}</strong> ${esc(c.course_title)}
+    ${groupCourses(alloc.data || []).length ? groupCourses(alloc.data || []).map(c => `<div style="padding:8px 0;border-top:1px solid var(--line)"><strong>${esc(c.course_code)}</strong> ${esc(c.course_title)}
       <button class="icon" aria-label="Edit course" title="Edit" onclick="admEdit('${c.course_id}')">&#9998;</button>
-      <div class="muted">${esc(c.class_label)} &middot; owner now: ${esc(c.host_dept || "not placed")} &middot; ${MODES[c.study_mode] || ""} &middot; ${AUDS[c.audience] || ""}</div>
+      <button class="danger" onclick="toolDelete('${c.course_id}', ${c.catalogue_id ? "'" + c.catalogue_id + "'" : "null"})">Delete</button>
+      <div class="muted">${c.taken ? "Taken by: " + c.taken.map(esc).join(", ") : esc(c.class_label || "")} &middot; owner now: ${esc(c.host_dept || "not placed")} &middot; ${MODES[c.study_mode] || ""} &middot; ${AUDS[c.audience] || ""}</div>
       <div id="ed-${c.course_id}"></div></div>`).join("")
       : `<p class="muted">No courses yet.</p>`}
     <h2>Course catalogue</h2>
