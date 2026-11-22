@@ -397,6 +397,7 @@ function editCourse(id) {
     <div class="actions"><button class="primary" id="es" onclick="saveEdit('${c.id}')">Save changes</button>
       <button onclick="$('editbox').innerHTML=''">Cancel</button></div>
     <p id="em" role="status"></p></div>`;
+  $("editbox").scrollIntoView({ behavior: "smooth", block: "center" });
   $("ec").focus();
 }
 
@@ -1546,7 +1547,7 @@ async function loadStaffTools() {
   const addForm = `<div class="panel"><strong>Add a course</strong>
     <p class="muted">The course is linked to every class of this level and study mode in the department, and to the lecturer you choose.</p>
     <div class="fields">
-      ${deanScope ? `<div class="wide"><label for="ac-d">Owning department</label><select id="ac-d" onchange="toolLecturers()">${deptOpts}</select></div>`
+      ${deanScope ? `${pickerHtml("ac", normDepts(depts), toolLecturers)}`
                   : `<input type="hidden" id="ac-d" value="${depts[0] ? depts[0].dept_id : ""}">`}
       <div><label for="ac-l">Level</label><select id="ac-l">${levelOpts}</select></div>
       <div><label for="ac-m">Study mode</label><select id="ac-m">${modeOpts}</select></div>
@@ -1556,7 +1557,7 @@ async function loadStaffTools() {
     </div>
     <div class="actions"><button class="primary" onclick="toolAddCourse()">Add course</button></div><p id="ac-m2" role="status"></p></div>`;
   const selectors = `<div class="panel"><strong>Show courses</strong><div class="fields">
-      ${deanScope ? `<div class="wide"><label for="sc-d">Department</label><select id="sc-d" onchange="loadScoped()">${deptOpts}</select></div>`
+      ${deanScope ? `${pickerHtml("sc", normDepts(depts), loadAll)}`
                   : `<input type="hidden" id="sc-d" value="${depts[0] ? depts[0].dept_id : ""}">`}
       <div><label for="sc-m">Study mode</label><select id="sc-m" onchange="loadScoped()"><option value="">All modes</option>${modeOpts}</select></div>
       <div><label for="sc-l">Level</label><select id="sc-l" onchange="loadScoped()"><option value="">All levels</option>${levelOpts}</select></div>
@@ -1852,16 +1853,16 @@ function admStaff(m) {
   const staffOpts = A.staff.slice().sort((a, b) => cmpNo(a.login_id, b.login_id)).map(x => `<option value="${esc(x.login_id)}">${esc(x.full_name)} (${esc(x.login_id)})</option>`).join("");
   m.innerHTML = `<h2>Add a lecturer</h2>
     <div class="panel"><div class="fields"><div class="wide"><label for="sl-n">Full name</label><input id="sl-n"></div>
-      <div class="wide"><label for="sl-d">Department</label><select id="sl-d">${deptOpts}</select></div></div>
+      ${pickerHtml("sl", normDepts(A.depts), () => {})}</div>
       <div class="actions"><button class="primary" onclick="admAddLecturer()">Add lecturer</button></div>
       <p class="muted">The lecturer gets a DLAMS ID and the temporary password 12345678. Give both in person.</p></div>
     <h2>Appoint a Dean, Sub-dean or HOD</h2>
     <div class="panel"><div class="fields">
       <div class="wide"><label for="ap-l">Lecturer</label><select id="ap-l">${staffOpts}</select></div>
-      <div><label for="ap-r">Position</label><select id="ap-r" onchange="$('ap-d').hidden = this.value !== 'hod'">
+      <div><label for="ap-r">Position</label><select id="ap-r">
         <option value="dean">Dean</option><option value="subdean">Sub-dean</option><option value="hod">HOD</option></select></div>
-      <div><label for="ap-s">School</label><select id="ap-s">${A.schools.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></div>
-      <div id="ap-d" hidden class="wide"><label for="ap-dep">Department (for HOD)</label><select id="ap-dep">${deptOpts}</select></div></div>
+      
+      <div class="wide">${pickerHtml("apd", normDepts(A.depts), () => {})}</div></div>
       <div class="actions"><button class="primary" onclick="admAppoint()">Appoint</button></div></div>
     <h2>All lecturers and leaders</h2>
     <div class="panel"><input id="sq" placeholder="Search by name or DLAMS ID" oninput="admStaffList()"><div id="sl-list" style="margin-top:8px"></div></div>
@@ -1878,7 +1879,7 @@ function admStaffList() {
     tree[sc] = tree[sc] || {}; (tree[sc][dp] = tree[sc][dp] || []).push(x); });
   const line = x => `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0;border-top:1px solid var(--line)">
     <span style="min-width:200px"><strong>${esc(x.full_name)}</strong> <span class="muted">${esc(x.login_id)}</span></span>
-    <select id="hd-${x.profile_id}"><option value="">Move to department...</option>${A.depts.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join("")}</select>
+    ${pickerHtml("hd-" + x.profile_id, normDepts(A.depts), () => {})}
     <button onclick="admSetHome('${x.profile_id}')">Set</button>
     <button onclick="admResetPw('${x.profile_id}')">Reset password</button>
     <button class="danger" onclick="admDelStaff('${x.profile_id}')">Delete</button></div>`;
@@ -1900,7 +1901,7 @@ async function admCourses(m) {
   const staffOpts = (sf.data || []).slice().sort((a, b) => cmpNo(a.login_id, b.login_id)).map(x => `<option value="${esc(x.login_id)}">${esc(x.full_name)} (${esc(x.login_id)})</option>`).join("");
   m.innerHTML = `<h2>Add a course</h2>
     <div class="panel"><div class="fields">
-      <div class="wide"><label for="cc-d">Owning department</label><select id="cc-d">${A.depts.map(d => `<option value="${d.id}">${esc(schoolOf(d))} - ${esc(d.name)}</option>`).join("")}</select></div>
+      ${pickerHtml("cc", normDepts(A.depts), () => {})}
       <div><label for="cc-c">Course code</label><input id="cc-c" maxlength="10" placeholder="ENT 211"></div>
       <div class="wide"><label for="cc-t">Course title</label><input id="cc-t"></div></div>
       <p class="muted">The owning department decides whether the course is general or departmental.</p>
@@ -1977,7 +1978,7 @@ async function admAddLecturer() {
   await admLoad(); admSec("staff");
 }
 async function admSetHome(pid) {
-  const dep = $("hd-" + pid).value; if (!dep) return admMsg("Choose a department first.", true);
+  const dep = $("hd-" + pid + "-d").value; if (!dep) return admMsg("Choose a department first.", true);
   const r = await sb.rpc("set_home_department", { p_profile: pid, p_dept: dep });
   if (r.error) return admMsg(r.error.message, true);
   admMsg(r.data); await admLoad(); admSec("staff");
@@ -1989,8 +1990,8 @@ async function admDelStaff(pid) {
   admMsg(r.data); await admLoad(); admSec("staff");
 }
 async function admAppoint() {
-  const role = $("ap-r").value, dep = role === "hod" ? $("ap-dep").value : null;
-  const r = await sb.rpc("appoint_leader", { p_login: $("ap-l").value, p_role: role, p_school: $("ap-s").value, p_dept: dep });
+  const role = $("ap-r").value, dep = role === "hod" ? $("apd-d").value : null;
+  const r = await sb.rpc("appoint_leader", { p_login: $("ap-l").value, p_role: role, p_school: $("apd-s").value, p_dept: dep });
   if (r.error) return admMsg(r.error.message, true);
   admMsg(r.data); await admLoad(); admSec("staff");
 }
@@ -2057,6 +2058,28 @@ async function loadAppointedBy() {
   const b = document.createElement("p"); b.id = "appby"; b.className = "muted"; b.textContent = "Appointed by " + data;
   const app = $("app"); app.insertBefore(b, app.children[1] || null);
 }
+
+/* School first, then only that school's departments. Used everywhere a department is chosen. */
+function normDepts(list) {
+  return (list || []).map(d => ({ id: d.dept_id || d.id, name: d.dept_name || d.name, school_id: d.school_id, school_name: d.school_name || schoolOf(d) }));
+}
+function pickerHtml(p, depts, fn) {
+  const sch = [...new Map(depts.map(d => [d.school_id, { id: d.school_id, name: d.school_name || "" }])).values()]
+    .filter(x => x.id).sort((a, b) => a.name.localeCompare(b.name));
+  window._pick = window._pick || {};
+  window._pick[p] = { depts, fn: fn || (() => {}) };
+  const first = sch[0] ? sch[0].id : "";
+  return `<div><label for="${p}-s">School</label><select id="${p}-s" onchange="refillPick('${p}')">${sch.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select></div>
+    <div><label for="${p}-d">Department</label><select id="${p}-d" onchange="pickDept('${p}')">${depts.filter(d => d.school_id === first).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join("")}</select></div>`;
+}
+function refillPick(p) {
+  const P = window._pick[p], sid = $(p + "-s").value;
+  $(p + "-d").innerHTML = P.depts.filter(d => d.school_id === sid).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join("")
+    || `<option value="">No departments in this school</option>`;
+  pickDept(p);
+}
+function pickDept(p) { const P = window._pick[p]; if (P && P.fn) P.fn(); }
+function loadAll() { loadScoped(); loadHosted(); }
 
 /* ---------- Start ---------- */
 (async () => {
