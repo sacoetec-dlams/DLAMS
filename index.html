@@ -2983,8 +2983,15 @@ function admPendingHtml() {
   const dname = id => (A.depts.find(d => d.id === id) || {}).name || "";
   return `<div class="wrap"><table><tr><th>Name</th><th>Matric</th><th>Department</th><th>Mode</th><th>Level</th><th></th></tr>${rows.map(r =>
     `<tr><td>${esc(r.p.full_name)}</td><td>${esc(r.p.login_id)}</td><td>${esc(dname(r.dept))}</td><td>${esc(MODES[r.mode] || "")}</td><td>${esc(String(r.level || ""))}</td>
-     <td style="white-space:nowrap"><button class="icon" aria-label="Edit student" title="Edit" onclick="editAdmStudent('${r.p.id}')">&#9998;</button> <button class="primary" onclick="approveAny('${r.p.id}')">Approve</button> <button onclick="admDeny('${r.p.id}')">Deny</button></td></tr>`).join("")}</table></div>
+     <td style="white-space:nowrap"><button class="icon" aria-label="Edit student" title="Edit" onclick="admEditPending('${r.p.id}')">&#9998;</button> <button class="primary" onclick="approveAny('${r.p.id}')">Approve</button> <button onclick="admDeny('${r.p.id}')">Deny</button></td></tr>`).join("")}</table></div>
     <p class="muted">After approving, make the HOC/CG in <strong>Schools &amp; departments</strong>: open the department, press <strong>Assign</strong> beside the level, choose the student, then press <strong>Make main HOC/CG</strong>.</p>`;
+}
+
+/* Edit a waiting student: the form opens below the list, and the page scrolls to it */
+function admEditPending(id) {
+  editAdmStudent(id);
+  const f = $("astu");
+  if (f) f.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 /* ---------- Start ---------- */
